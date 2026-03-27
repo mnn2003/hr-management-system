@@ -1,0 +1,78 @@
+rules_version = '2';
+service firebase.storage {
+  match /b/{bucket}/o {
+    // Helper function to check if user is admin
+    function isAdmin() {
+      return request.auth != null && 
+        firestore.get(/databases/(default)/documents/user_roles/$(request.auth.uid)).data.role in ['hr', 'hod', 'super-admin'];
+    }
+    
+    // Helper function to get user's organization
+    function getUserOrg() {
+      return firestore.get(/databases/(default)/documents/user_roles/$(request.auth.uid)).data.organizationId;
+    }
+
+    // Profile photos - users can only write their own, authenticated users can read all
+    match /profile-photos/{userId} {
+      allow read: if request.auth != null;
+      allow write: if request.auth.uid == userId
+        && request.resource.size < 5 * 1024 * 1024
+        && request.resource.contentType.matches('image/(jpeg|jpg|png|webp)');
+    }
+    
+    // ITR documents - private to user and admins from same org
+    match /itr_documents/{userId}/{document=**} {
+      allow read: if request.auth.uid == userId || isAdmin();
+      allow write: if request.auth.uid == userId
+        && request.resource.size < 10 * 1024 * 1024
+        && request.resource.contentType in ['application/pdf', 'image/jpeg', 'image/png', 'image/jpg'];
+    }
+    
+    // Investment proofs - private to user and admins from same org
+    match /investment_proofs/{userId}/{document=**} {
+      allow read: if request.auth.uid == userId || isAdmin();
+      allow write: if request.auth.uid == userId
+        && request.resource.size < 5 * 1024 * 1024
+        && request.resource.contentType in ['application/pdf', 'image/jpeg', 'image/png', 'image/jpg'];
+    }
+    
+    // Reimbursements - private to user and admins from same org
+    match /reimbursements/{userId}/{document=**} {
+      allow read: if request.auth.uid == userId || isAdmin();
+      allow write: if request.auth.uid == userId
+        && request.resource.size < 5 * 1024 * 1024
+        && request.resource.contentType in ['application/pdf', 'image/jpeg', 'image/png', 'image/jpg'];
+    }
+    
+    // Employee documents (PAN, Aadhar) - user can read own, admins can read/write
+    match /documents/{userId}/{document=**} {
+      allow read: if request.auth.uid == userId || isAdmin();
+      allow write: if isAdmin();
+    }
+    
+    // Organization logos - authenticated users can read, admins can write
+    match /organization_logos/{orgId} {
+      allow read: if request.auth != null;
+      allow write: if isAdmin()
+        && request.resource.size < 2 * 1024 * 1024
+        && request.resource.contentType.matches('image/(jpeg|jpg|png|svg\\+xml|webp)');
+    }
+    
+    // Salary slip PDFs - strict access
+    match /salary_slips/{userId}/{document=**} {
+      allow read: if request.auth.uid == userId || isAdmin();
+      allow write: if isAdmin();
+    }
+    
+    // Policy documents - authenticated users can read, admins can write
+    match /policy_documents/{document=**} {
+      allow read: if request.auth != null;
+      allow write: if isAdmin();
+    }
+    
+    // Default deny - any paths not explicitly matched are denied
+    match /{allPaths=**} {
+      allow read, write: if false;
+    }
+  }
+}
