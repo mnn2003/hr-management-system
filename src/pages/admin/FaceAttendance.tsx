@@ -20,6 +20,7 @@ import {
   Clock,
   UserX,
   ZoomIn,
+  LogOut,
 } from 'lucide-react';
 
 interface KnownFace {
@@ -31,10 +32,13 @@ interface KnownFace {
   photoURL?: string;
 }
 
-interface RecentPunch {
+interface AttendanceRecord {
+  id: string;
   employeeId: string;
-  type: 'in' | 'out';
-  timestamp: number;
+  date: string;
+  punchIn: string | null;
+  punchOut: string | null;
+  source?: string;
 }
 
 const normalizeStoredDescriptors = (descriptors: unknown): Float32Array[] => {
@@ -50,13 +54,12 @@ const normalizeStoredDescriptors = (descriptors: unknown): Float32Array[] => {
     .filter((d): d is Float32Array => d !== null);
 };
 
-const PUNCH_COOLDOWN = 60_000; // 60 seconds cooldown between same employee punches
-const DUPLICATE_PUNCH_WINDOW = 600_000; // 10 minutes window to prevent duplicate punch types
-const MIN_FACE_SIZE = 120; // minimum face box width to consider "close enough"
+const PUNCH_COOLDOWN = 2000; // 2 seconds cooldown between scans to prevent duplicate processing
 const RESULT_DISPLAY_DURATION = 4000;
+const MIN_FACE_SIZE = 120; // minimum face box width to consider "close enough"
 
 type ResultState = {
-  type: 'success' | 'not_found' | 'too_far' | 'already_punched';
+  type: 'success' | 'not_found' | 'too_far' | 'already_punched_in' | 'already_punched_out' | 'no_punch_in';
   employeeName?: string;
   employeeCode?: string;
   photoURL?: string;
@@ -91,9 +94,8 @@ const FaceAttendance = () => {
   const [currentTime, setCurrentTime] = useState(new Date());
   const [result, setResult] = useState<ResultState>(null);
 
-  const recentPunchesRef = useRef<Map<string, RecentPunch>>(new Map());
-  const notFoundCooldownRef = useRef(0);
   const processingRef = useRef<Set<string>>(new Set()); // Track employees being processed
+  const lastScanTimeRef = useRef<Map<string, number>>(new Map()); // Track last scan time per employee
 
   const showResult = useCallback((r: ResultState) => {
     if (resultTimeoutRef.current) clearTimeout(resultTimeoutRef.current);
@@ -182,80 +184,122 @@ const FaceAttendance = () => {
     if (modelsReady && knownFaces.length > 0 && !cameraActive) startCamera();
   }, [modelsReady, knownFaces, cameraActive, startCamera]);
 
-  const getLastPunchOfToday = async (employeeId: string): Promise<{ type: 'in' | 'out'; timestamp: Date } | null> => {
+  // Get today's attendance record from the main attendance collection
+  const getTodayAttendance = async (employeeUserId: string, employeeId: string): Promise<AttendanceRecord | null> => {
     const today = formatLocalDate(new Date());
     try {
-      const q = query(
-        collection(db, 'face_attendance'),
-        where('employeeId', '==', employeeId),
-        where('date', '==', today),
-        orderBy('timestamp', 'desc'),
-        limit(1)
+      // Try to find by userId first (for web/mobile punches)
+      let q = query(
+        collection(db, 'attendance'),
+        where('employeeId', '==', employeeUserId),
+        where('date', '==', today)
       );
-      const snap = await getDocs(q);
-      if (snap.empty) return null;
+      let snapshot = await getDocs(q);
       
-      const data = snap.docs[0].data();
-      return {
-        type: data.type as 'in' | 'out',
-        timestamp: data.timestamp.toDate(),
-      };
+      // If not found, try by employeeDocumentId (for face recognition)
+      if (snapshot.empty) {
+        q = query(
+          collection(db, 'attendance'),
+          where('employeeDocumentId', '==', employeeId),
+          where('date', '==', today)
+        );
+        snapshot = await getDocs(q);
+      }
+      
+      if (!snapshot.empty) {
+        const doc = snapshot.docs[0];
+        return {
+          id: doc.id,
+          ...doc.data()
+        } as AttendanceRecord;
+      }
+      return null;
     } catch (error) {
-      console.error('Error fetching last punch:', error);
+      console.error('Error fetching today attendance:', error);
       return null;
     }
   };
 
-  const checkDuplicatePunch = async (employeeId: string, punchType: 'in' | 'out'): Promise<boolean> => {
-    const now = Date.now();
-    const recentPunch = recentPunchesRef.current.get(employeeId);
-    
-    // Check in-memory cache first
-    if (recentPunch && 
-        recentPunch.type === punchType && 
-        now - recentPunch.timestamp < DUPLICATE_PUNCH_WINDOW) {
-      return true;
-    }
-    
-    // Check database for recent punch of same type
-    const lastPunch = await getLastPunchOfToday(employeeId);
-    if (lastPunch && 
-        lastPunch.type === punchType && 
-        now - lastPunch.timestamp.getTime() < DUPLICATE_PUNCH_WINDOW) {
-      // Update cache
-      recentPunchesRef.current.set(employeeId, {
-        employeeId,
-        type: punchType,
-        timestamp: lastPunch.timestamp.getTime(),
-      });
-      return true;
-    }
-    
-    return false;
+  // Check if user has already punched in today from any source
+  const hasPunchedInToday = async (employeeUserId: string, employeeId: string): Promise<boolean> => {
+    const attendance = await getTodayAttendance(employeeUserId, employeeId);
+    return attendance !== null && attendance.punchIn !== null && attendance.punchOut === null;
   };
 
-  const getPunchType = async (employeeId: string): Promise<'in' | 'out'> => {
+  // Check if user has already punched out today
+  const hasPunchedOutToday = async (employeeUserId: string, employeeId: string): Promise<boolean> => {
+    const attendance = await getTodayAttendance(employeeUserId, employeeId);
+    return attendance !== null && attendance.punchOut !== null;
+  };
+
+  // Get the current attendance status
+  const getAttendanceStatus = async (employeeUserId: string, employeeId: string): Promise<{
+    hasPunchIn: boolean;
+    hasPunchOut: boolean;
+    attendanceRecord: AttendanceRecord | null;
+    punchInTime: Date | null;
+  }> => {
+    const attendance = await getTodayAttendance(employeeUserId, employeeId);
+    
+    if (!attendance) {
+      return {
+        hasPunchIn: false,
+        hasPunchOut: false,
+        attendanceRecord: null,
+        punchInTime: null,
+      };
+    }
+    
+    return {
+      hasPunchIn: attendance.punchIn !== null,
+      hasPunchOut: attendance.punchOut !== null,
+      attendanceRecord: attendance,
+      punchInTime: attendance.punchIn ? new Date(attendance.punchIn) : null,
+    };
+  };
+
+  // Calculate if punch out is allowed (no time restriction)
+  const canPunchOut = (punchInTime: Date | null): boolean => {
+    if (!punchInTime) return false;
+    // Allow punch out at any time after punch in
+    // No minimum time restriction
+    return true;
+  };
+
+  const handlePunchIn = async (known: KnownFace) => {
     const today = formatLocalDate(new Date());
-    try {
-      const q = query(
-        collection(db, 'face_attendance'),
-        where('employeeId', '==', employeeId),
-        where('date', '==', today),
-        orderBy('timestamp', 'desc'),
-        limit(1)
-      );
-      const snap = await getDocs(q);
-      if (snap.empty) return 'in';
-      const lastPunch = snap.docs[0].data();
-      return lastPunch.type === 'in' ? 'out' : 'in';
-    } catch {
-      return 'in';
-    }
+    const isoTime = new Date().toISOString();
+    const attendanceUserId = known.userId || known.employeeId;
+    
+    // Create attendance record
+    await addDoc(collection(db, 'attendance'), {
+      employeeId: attendanceUserId,
+      employeeDocumentId: known.employeeId,
+      employeeName: known.employeeName,
+      employeeCode: known.employeeCode,
+      date: today,
+      punchIn: isoTime,
+      punchInLocation: null,
+      punchOut: null,
+      punchOutLocation: null,
+      organizationId: organizationId || null,
+      source: 'face_recognition',
+    });
   };
 
-  const markAttendance = async (known: KnownFace) => {
+  const handlePunchOut = async (known: KnownFace, attendanceRecord: AttendanceRecord) => {
+    const isoTime = new Date().toISOString();
+    
+    await updateDoc(doc(db, 'attendance', attendanceRecord.id), {
+      punchOut: isoTime,
+      punchOutLocation: null,
+    });
+  };
+
+  const processAttendance = async (known: KnownFace) => {
     const now = Date.now();
     const employeeId = known.employeeId;
+    const attendanceUserId = known.userId || known.employeeId;
     
     // Prevent multiple concurrent processing for same employee
     if (processingRef.current.has(employeeId)) {
@@ -263,149 +307,108 @@ const FaceAttendance = () => {
       return;
     }
     
+    // Check cooldown to prevent processing the same face too frequently
+    const lastScanTime = lastScanTimeRef.current.get(employeeId);
+    if (lastScanTime && now - lastScanTime < PUNCH_COOLDOWN) {
+      console.log(`Cooldown active for ${employeeId}`);
+      return;
+    }
+    
     processingRef.current.add(employeeId);
+    lastScanTimeRef.current.set(employeeId, now);
     
     try {
-      // Check cooldown (prevent too frequent punches)
-      const lastPunchTime = recentPunchesRef.current.get(employeeId)?.timestamp;
-      if (lastPunchTime && now - lastPunchTime < PUNCH_COOLDOWN) {
-        console.log(`Cooldown active for ${employeeId}`);
-        return;
-      }
+      // Get current attendance status from database
+      const { hasPunchIn, hasPunchOut, attendanceRecord, punchInTime } = 
+        await getAttendanceStatus(attendanceUserId, employeeId);
       
-      const punchType = await getPunchType(employeeId);
+      console.log(`Attendance status for ${known.employeeName}:`, {
+        hasPunchIn,
+        hasPunchOut,
+        punchInTime: punchInTime?.toLocaleTimeString(),
+      });
       
-      // Check for duplicate punch of same type within 10 minutes
-      const isDuplicate = await checkDuplicatePunch(employeeId, punchType);
-      if (isDuplicate) {
+      // Case 1: Already punched out for today
+      if (hasPunchOut) {
         showResult({
-          type: 'already_punched',
+          type: 'already_punched_out',
           employeeName: known.employeeName,
           employeeCode: known.employeeCode,
           photoURL: known.photoURL,
-          punchType,
-          message: `Already punched ${punchType === 'in' ? 'IN' : 'OUT'} within last 10 minutes`,
+          punchType: 'out',
+          message: 'You have already punched out for today',
         });
-        speak(`${known.employeeName}, you have already punched ${punchType === 'in' ? 'in' : 'out'} recently.`);
+        speak(`${known.employeeName}, you have already punched out for today. See you tomorrow!`);
         return;
       }
       
-      const today = formatLocalDate(new Date());
-      const isoTime = new Date().toISOString();
-      const timeStr = new Date().toLocaleTimeString();
-      
-      // Update in-memory cache before DB operation
-      recentPunchesRef.current.set(employeeId, {
-        employeeId,
-        type: punchType,
-        timestamp: now,
-      });
-      
-      // Record in face_attendance collection
-      await addDoc(collection(db, 'face_attendance'), {
-        employeeId: known.employeeId,
-        employeeName: known.employeeName,
-        employeeCode: known.employeeCode,
-        organizationId,
-        date: today,
-        time: timeStr,
-        timestamp: Timestamp.now(),
-        type: punchType,
-      });
-      
-      // Update main attendance collection
-      const attendanceUserId = known.userId || known.employeeId;
-      const attendanceQuery = query(
-        collection(db, 'attendance'),
-        where('employeeId', '==', attendanceUserId),
-        where('date', '==', today)
-      );
-      const attendanceSnap = await getDocs(attendanceQuery);
-      
-      if (punchType === 'in') {
-        if (attendanceSnap.empty) {
-          await addDoc(collection(db, 'attendance'), {
-            employeeId: attendanceUserId,
-            employeeDocumentId: known.employeeId,
+      // Case 2: Has punched in (from any source) and not punched out
+      if (hasPunchIn && attendanceRecord && !hasPunchOut) {
+        // Check if punch out is allowed (always true now, no time restriction)
+        if (canPunchOut(punchInTime)) {
+          // Perform punch out
+          await handlePunchOut(known, attendanceRecord);
+          
+          // Record in face_attendance collection
+          const today = formatLocalDate(new Date());
+          await addDoc(collection(db, 'face_attendance'), {
+            employeeId: known.employeeId,
             employeeName: known.employeeName,
             employeeCode: known.employeeCode,
+            organizationId,
             date: today,
-            punchIn: isoTime,
-            punchInLocation: null,
-            punchOut: null,
-            punchOutLocation: null,
-            organizationId: organizationId || null,
-            source: 'face_recognition',
+            time: new Date().toLocaleTimeString(),
+            timestamp: Timestamp.now(),
+            type: 'out',
           });
-        } else {
-          // Check if already punched in today
-          const existingAttendance = attendanceSnap.docs[0].data();
-          if (existingAttendance.punchIn && !existingAttendance.punchOut) {
-            showResult({
-              type: 'already_punched',
-              employeeName: known.employeeName,
-              employeeCode: known.employeeCode,
-              photoURL: known.photoURL,
-              punchType: 'in',
-              message: 'You have already punched in today',
-            });
-            speak(`${known.employeeName}, you have already punched in today.`);
-            return;
-          }
-        }
-      } else {
-        // Punch out
-        if (!attendanceSnap.empty) {
-          const attendanceDoc = attendanceSnap.docs[0];
-          const existingAttendance = attendanceDoc.data();
           
-          // Check if already punched out
-          if (existingAttendance.punchOut) {
-            showResult({
-              type: 'already_punched',
-              employeeName: known.employeeName,
-              employeeCode: known.employeeCode,
-              photoURL: known.photoURL,
-              punchType: 'out',
-              message: 'You have already punched out today',
-            });
-            speak(`${known.employeeName}, you have already punched out today.`);
-            return;
-          }
-          
-          await updateDoc(doc(db, 'attendance', attendanceDoc.id), {
-            punchOut: isoTime,
-            punchOutLocation: null,
-          });
-        } else {
-          // No punch in record found, but trying to punch out
           showResult({
-            type: 'already_punched',
+            type: 'success',
             employeeName: known.employeeName,
             employeeCode: known.employeeCode,
             photoURL: known.photoURL,
             punchType: 'out',
-            message: 'No punch in record found for today',
           });
-          speak(`${known.employeeName}, no punch in record found for today.`);
-          return;
+          speak(`Thank you, ${known.employeeName}. Punch out recorded. Have a great day!`);
         }
+        return;
       }
       
-      // Success!
-      showResult({
-        type: 'success',
-        employeeName: known.employeeName,
-        employeeCode: known.employeeCode,
-        photoURL: known.photoURL,
-        punchType,
-      });
-      speak(`Thank you, ${known.employeeName}. Punch ${punchType} recorded.`);
+      // Case 3: No punch in yet today
+      if (!hasPunchIn) {
+        // Perform punch in
+        await handlePunchIn(known);
+        
+        // Record in face_attendance collection
+        const today = formatLocalDate(new Date());
+        await addDoc(collection(db, 'face_attendance'), {
+          employeeId: known.employeeId,
+          employeeName: known.employeeName,
+          employeeCode: known.employeeCode,
+          organizationId,
+          date: today,
+          time: new Date().toLocaleTimeString(),
+          timestamp: Timestamp.now(),
+          type: 'in',
+        });
+        
+        showResult({
+          type: 'success',
+          employeeName: known.employeeName,
+          employeeCode: known.employeeCode,
+          photoURL: known.photoURL,
+          punchType: 'in',
+        });
+        speak(`Welcome, ${known.employeeName}. Punch in recorded. Have a great day!`);
+        return;
+      }
+      
+      // Case 4: Should not reach here, but handle gracefully
+      console.log('Unexpected attendance state:', { hasPunchIn, hasPunchOut });
       
     } catch (e) {
-      console.error('Error marking attendance:', e);
-      // Revert cache on error
-      recentPunchesRef.current.delete(employeeId);
+      console.error('Error processing attendance:', e);
+      toast.error('Failed to process attendance');
     } finally {
       processingRef.current.delete(employeeId);
     }
@@ -440,6 +443,7 @@ const FaceAttendance = () => {
           const ctx = canvas.getContext('2d');
           if (ctx) {
             ctx.clearRect(0, 0, canvas.width, canvas.height);
+            
             for (const det of detections) {
               const { x, y, width, height } = det.detection.box;
               
@@ -448,11 +452,6 @@ const FaceAttendance = () => {
                 ctx.strokeStyle = '#f59e0b';
                 ctx.lineWidth = 3;
                 ctx.strokeRect(x, y, width, height);
-                if (Date.now() - notFoundCooldownRef.current > 3000) {
-                  notFoundCooldownRef.current = Date.now();
-                  showResult({ type: 'too_far' });
-                  speak('Please come closer to the camera.');
-                }
                 continue;
               }
               
@@ -466,16 +465,14 @@ const FaceAttendance = () => {
                 ctx.strokeStyle = '#22c55e';
                 ctx.lineWidth = 3;
                 ctx.strokeRect(x, y, width, height);
-                if (known) await markAttendance(known);
+                
+                if (known) {
+                  await processAttendance(known);
+                }
               } else {
                 ctx.strokeStyle = '#ef4444';
                 ctx.lineWidth = 3;
                 ctx.strokeRect(x, y, width, height);
-                if (Date.now() - notFoundCooldownRef.current > 5000) {
-                  notFoundCooldownRef.current = Date.now();
-                  showResult({ type: 'not_found' });
-                  speak('User not found. Please contact HR.');
-                }
               }
             }
           }
@@ -483,7 +480,7 @@ const FaceAttendance = () => {
       } catch (e) {
         console.warn('Scan frame error:', e);
       }
-    }, 1500);
+    }, 2000); // Scan every 2 seconds
     
     return () => {
       if (scanIntervalRef.current) clearInterval(scanIntervalRef.current);
@@ -565,18 +562,26 @@ const FaceAttendance = () => {
                 style={{
                   background: result.type === 'success'
                     ? 'rgba(22, 163, 74, 0.9)'
-                    : result.type === 'already_punched'
+                    : result.type === 'already_punched_in'
                     ? 'rgba(245, 158, 11, 0.9)'
-                    : result.type === 'not_found'
+                    : result.type === 'already_punched_out'
+                    ? 'rgba(156, 163, 175, 0.9)'
+                    : result.type === 'no_punch_in'
                     ? 'rgba(220, 38, 38, 0.9)'
                     : 'rgba(217, 119, 6, 0.9)',
                 }}>
                 {result.type === 'success' && (
                   <>
-                    <CheckCircle2 className="h-16 w-16 sm:h-20 sm:w-20 text-white mx-auto mb-4" />
-                    <h2 className="text-2xl sm:text-3xl font-bold text-white mb-2">Thank You!</h2>
+                    {result.punchType === 'in' ? (
+                      <CheckCircle2 className="h-16 w-16 sm:h-20 sm:w-20 text-white mx-auto mb-4" />
+                    ) : (
+                      <LogOut className="h-16 w-16 sm:h-20 sm:w-20 text-white mx-auto mb-4" />
+                    )}
+                    <h2 className="text-2xl sm:text-3xl font-bold text-white mb-2">
+                      {result.punchType === 'in' ? 'Welcome!' : 'Goodbye!'}
+                    </h2>
                     <p className="text-base sm:text-lg text-white mb-4">
-                      {result.punchType === 'in' ? 'Punched In' : 'Punched Out'}
+                      {result.punchType === 'in' ? 'Punched In Successfully' : 'Punched Out Successfully'}
                     </p>
                     <div className="space-y-3">
                       {result.photoURL && (
@@ -599,15 +604,47 @@ const FaceAttendance = () => {
                   </>
                 )}
                 
-                {result.type === 'already_punched' && (
+                {result.type === 'already_punched_in' && (
                   <>
                     <Clock className="h-16 w-16 sm:h-20 sm:w-20 text-white mx-auto mb-4" />
-                    <h2 className="text-2xl sm:text-3xl font-bold text-white mb-2">Already Punched!</h2>
+                    <h2 className="text-2xl sm:text-3xl font-bold text-white mb-2">Already Punched In!</h2>
                     <p className="text-base sm:text-lg text-white mb-2">
-                      {result.punchType === 'in' ? 'Already punched IN' : 'Already punched OUT'}
+                      You are already checked in
                     </p>
                     <p className="text-sm sm:text-base text-white/80">
-                      {result.message || 'Please wait before punching again'}
+                      Please punch out when you're done
+                    </p>
+                    <p className="text-xs text-white/60 mt-3">
+                      {result.employeeName} (ID: {result.employeeCode})
+                    </p>
+                  </>
+                )}
+                
+                {result.type === 'already_punched_out' && (
+                  <>
+                    <CheckCircle2 className="h-16 w-16 sm:h-20 sm:w-20 text-white mx-auto mb-4" />
+                    <h2 className="text-2xl sm:text-3xl font-bold text-white mb-2">Day Complete!</h2>
+                    <p className="text-base sm:text-lg text-white mb-2">
+                      You have already punched out
+                    </p>
+                    <p className="text-sm sm:text-base text-white/80">
+                      See you tomorrow!
+                    </p>
+                    <p className="text-xs text-white/60 mt-3">
+                      {result.employeeName} (ID: {result.employeeCode})
+                    </p>
+                  </>
+                )}
+                
+                {result.type === 'no_punch_in' && (
+                  <>
+                    <AlertCircle className="h-16 w-16 sm:h-20 sm:w-20 text-white mx-auto mb-4" />
+                    <h2 className="text-2xl sm:text-3xl font-bold text-white mb-2">No Punch In Found</h2>
+                    <p className="text-base sm:text-lg text-white mb-2">
+                      Please punch in first
+                    </p>
+                    <p className="text-sm sm:text-base text-white/80">
+                      {result.message || 'You need to punch in before punching out'}
                     </p>
                     <p className="text-xs text-white/60 mt-3">
                       {result.employeeName} (ID: {result.employeeCode})
