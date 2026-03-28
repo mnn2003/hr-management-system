@@ -44,6 +44,7 @@ const FaceEnrollment = () => {
           id: d.id,
           name: d.data().name || d.data().fullName || `${d.data().firstName || ''} ${d.data().lastName || ''}`.trim(),
           employeeCode: d.data().employeeCode || d.data().employeeId || '',
+          userId: d.data().userId || '',
         }));
         setEmployees(emps);
       } catch (e) {
@@ -211,8 +212,27 @@ const FaceEnrollment = () => {
       // Store face data
       const faceDocRef = doc(db, 'face_data', selectedEmployeeId);
       const existing = await getDoc(faceDocRef);
-      const existingDescriptors: number[][] = existing.exists()
-        ? existing.data().descriptors || []
+      const existingDescriptors: { values: number[] }[] = existing.exists()
+        ? Array.isArray(existing.data().descriptors)
+          ? existing.data().descriptors
+              .map((item: unknown) => {
+                if (Array.isArray(item)) {
+                  return { values: item as number[] };
+                }
+
+                if (
+                  item &&
+                  typeof item === 'object' &&
+                  'values' in item &&
+                  Array.isArray((item as { values?: unknown }).values)
+                ) {
+                  return { values: (item as { values: number[] }).values };
+                }
+
+                return null;
+              })
+              .filter((item): item is { values: number[] } => item !== null)
+          : []
         : [];
 
       // If re-enrolling and this is the first capture, clear old data
@@ -220,7 +240,7 @@ const FaceEnrollment = () => {
         existingDescriptors.length = 0;
       }
 
-      existingDescriptors.push(descriptorArray);
+      existingDescriptors.push({ values: descriptorArray });
 
       const emp = employees.find((e) => e.id === selectedEmployeeId);
 
@@ -228,6 +248,7 @@ const FaceEnrollment = () => {
         employeeId: selectedEmployeeId,
         employeeName: emp?.name || '',
         employeeCode: emp?.employeeCode || '',
+        userId: emp?.userId || '',
         organizationId,
         descriptors: existingDescriptors,
         enrolledAt: existing.exists() ? existing.data().enrolledAt : new Date().toISOString(),
