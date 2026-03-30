@@ -20,6 +20,7 @@ A comprehensive multi-organization web-based HR Management System built with Rea
   - **Login Devices Section**: View and manage active login sessions
 - **Attendance Tracking**: 
   - Mark punch-in/out times from dashboard or attendance page
+  - **Face Recognition Attendance**: Punch in/out via facial recognition kiosk
   - Request attendance edits for forgotten punch-outs
   - View daily, weekly, and monthly attendance records
   - Generate attendance reports
@@ -87,6 +88,17 @@ A comprehensive multi-organization web-based HR Management System built with Rea
   - Approve or reject attendance edit requests
   - Filter by date range and employee with searchable dropdown
   - Export attendance reports
+- **Face Recognition System**:
+  - **Face Enrollment**: Capture and store employee facial data with multiple samples
+  - **Face Enrollment Management**: View, search, and delete enrolled face data; track capture counts per employee
+  - **Face Attendance Kiosk**: Mobile-responsive fullscreen kiosk for facial recognition punch-in/out
+    - Real-time face detection with proximity validation ("Please come closer" prompt)
+    - Audio feedback via Web Speech API ("Thank You", "User Not Found", "Please come closer")
+    - Captures real-time face snapshot at punch time and saves to attendance record
+    - Displays employee name, photo, and ID on successful recognition
+    - Records location as "Office Face Machine" in attendance
+    - 60-second cooldown per user to prevent duplicate punches
+    - Syncs with primary attendance collection for unified reporting
 - **Leave Management**:
   - Configure leave types and balances
   - Review pending leave requests from organization employees
@@ -152,6 +164,7 @@ A comprehensive multi-organization web-based HR Management System built with Rea
 - **Department View**: View employees within assigned department
 - **Shift Management**: View and manage shift assignments for department employees
 - **Attendance Management & Reporting**: Access attendance management and reports for the department
+- **Face Attendance**: Access face recognition attendance kiosk for department
 - **Exit Management**: Participate in exit management processes
 - **Restricted Access**: Cannot manage employees, departments, attendance, or holidays
 
@@ -228,6 +241,7 @@ The application uses a comprehensive design system with semantic HSL color token
 - **Notifications**: React Hot Toast & Sonner
 - **Animations**: Framer Motion
 - **Excel Processing**: ExcelJS
+- **Face Recognition**: face-api.js (SSD MobileNetV1, 68-point landmarks, face descriptors)
 
 ## Prerequisites
 
@@ -301,6 +315,7 @@ The application uses a comprehensive design system with semantic HSL color token
    - `subscriptions` - Payment/subscription records (Razorpay)
    - `user_preferences` - User menu and dashboard preferences
    - `system_settings` - Global system configuration (logo, name)
+   - `face_data` - Employee facial recognition descriptors and metadata
 
 5. **Razorpay Configuration** (Optional — for payment features)
    
@@ -475,6 +490,19 @@ Employees have access to a self-service portal for:
 - **Tabbed Interface**: Separate tabs for managing shifts and viewing assignments
 - **Role-Based Access**: Available to HR (full CRUD) and HOD (view and assign)
 
+## Face Recognition Attendance
+
+- **Technology**: face-api.js with SSD MobileNetV1 for detection, 68-point facial landmarks, and 128-dimension face descriptors
+- **Models**: Stored in `/public/models/` and loaded at runtime
+- **Enrollment**: HR captures multiple face samples per employee; descriptors stored in Firestore (`face_data` collection) as arrays of objects for compatibility
+- **Kiosk Mode**: Fullscreen, mobile-responsive attendance page bypassing the main layout
+- **Detection Flow**: Video feed → face detection → size check (proximity) → descriptor matching → attendance sync
+- **Audio Feedback**: Web Speech API announces "Thank You", "User Not Found", or "Please come closer"
+- **Image Capture**: Real-time JPEG snapshot saved to Firestore on each punch event
+- **Attendance Sync**: Writes to the primary `attendance` collection with `source: 'face_recognition'` and `location: 'Office Face Machine'`
+- **Cooldown**: 60-second per-user cooldown prevents duplicate punches
+- **Management**: HR can view all enrolled faces, search by name/department, delete enrollments, and trigger re-enrollment
+
 ## Usage
 
 ### For Super Admin
@@ -508,11 +536,14 @@ Employees have access to a self-service portal for:
 6. Generate monthly salary slips
 7. Manage departments, holidays, and notifications
 8. Create and assign work shifts to employees
-9. Handle exit processes (resignations, clearance, settlements)
-10. Review self-service requests
-11. Respond to helpdesk tickets and update statuses
-12. Update organization branding
-13. View HR Analytics
+9. Enroll employee faces via Face Enrollment page
+10. Manage face data (view, search, delete) via Face Data Mgmt
+11. Set up Face Attendance kiosk for biometric punch-in/out
+12. Handle exit processes (resignations, clearance, settlements)
+13. Review self-service requests
+14. Respond to helpdesk tickets and update statuses
+15. Update organization branding
+16. View HR Analytics
 
 ### For HOD
 1. Select your organization from the list
@@ -566,12 +597,16 @@ src/
 │   ├── dateUtils.ts             # Date utility functions
 │   ├── deviceFingerprint.ts     # Device fingerprint generation
 │   ├── deviceSessionService.ts  # Device session management service
+│   ├── faceRecognitionService.ts # Face-api.js model loading and detection
 │   ├── razorpay.ts              # Razorpay payment integration
 │   └── utils.ts                 # Utility functions
 ├── pages/
 │   ├── admin/                   # Admin pages
 │   │   ├── DeviceAccess.tsx     # Device access control page
 │   │   ├── ExitManagement.tsx   # Exit management page
+│   │   ├── FaceAttendance.tsx   # Face recognition kiosk page
+│   │   ├── FaceEnrollment.tsx   # Face data enrollment page
+│   │   ├── FaceEnrollmentManagement.tsx # Face data management dashboard
 │   │   ├── HRAnalytics.tsx      # HR analytics dashboard
 │   │   ├── ShiftManagement.tsx  # Shift management page
 │   │   ├── OrganizationManagement.tsx
