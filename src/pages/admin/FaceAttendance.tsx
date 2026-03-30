@@ -281,10 +281,26 @@ const FaceAttendance = () => {
     return { allowed: false, remainingMinutes };
   };
 
+  const captureCurrentFrame = (): string | null => {
+    if (!videoRef.current || videoRef.current.readyState < 4) return null;
+    try {
+      const canvas = document.createElement('canvas');
+      canvas.width = videoRef.current.videoWidth;
+      canvas.height = videoRef.current.videoHeight;
+      const ctx = canvas.getContext('2d');
+      if (!ctx) return null;
+      ctx.drawImage(videoRef.current, 0, 0);
+      return canvas.toDataURL('image/jpeg', 0.7);
+    } catch {
+      return null;
+    }
+  };
+
   const handlePunchIn = async (known: KnownFace) => {
     const today = formatLocalDate(new Date());
     const isoTime = new Date().toISOString();
     const attendanceUserId = known.userId || known.employeeId;
+    const faceImage = captureCurrentFrame();
     
     // Create attendance record
     await addDoc(collection(db, 'attendance'), {
@@ -294,9 +310,11 @@ const FaceAttendance = () => {
       employeeCode: known.employeeCode,
       date: today,
       punchIn: isoTime,
-      punchInLocation: null,
+      punchInLocation: 'Office Face Machine',
+      punchInFaceImage: faceImage,
       punchOut: null,
       punchOutLocation: null,
+      punchOutFaceImage: null,
       organizationId: organizationId || null,
       source: 'face_recognition',
     });
@@ -304,10 +322,12 @@ const FaceAttendance = () => {
 
   const handlePunchOut = async (known: KnownFace, attendanceRecord: AttendanceRecord) => {
     const isoTime = new Date().toISOString();
+    const faceImage = captureCurrentFrame();
     
     await updateDoc(doc(db, 'attendance', attendanceRecord.id), {
       punchOut: isoTime,
-      punchOutLocation: null,
+      punchOutLocation: 'Office Face Machine',
+      punchOutFaceImage: faceImage,
     });
   };
 
@@ -401,6 +421,8 @@ const FaceAttendance = () => {
           time: new Date().toLocaleTimeString(),
           timestamp: Timestamp.now(),
           type: 'out',
+          location: 'Office Face Machine',
+          faceImage: captureCurrentFrame(),
         });
         
         showResult({
@@ -433,6 +455,8 @@ const FaceAttendance = () => {
             time: new Date().toLocaleTimeString(),
             timestamp: Timestamp.now(),
             type: 'in',
+            location: 'Office Face Machine',
+            faceImage: captureCurrentFrame(),
           });
           
           showResult({
