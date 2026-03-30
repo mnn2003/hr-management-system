@@ -42,6 +42,7 @@ import Chat from "./pages/Chat";
 import ShiftManagement from "./pages/admin/ShiftManagement";
 import FaceEnrollment from "./pages/admin/FaceEnrollment";
 import FaceAttendance from "./pages/admin/FaceAttendance";
+import FaceEnrollmentManagement from "./pages/admin/FaceEnrollmentManagement";
 import InstallApp from "./components/InstallApp";
 
 const queryClient = new QueryClient();
@@ -99,6 +100,7 @@ const App = () => (
             <Route path="/shift-management" element={<ProtectedRoute><ShiftManagement /></ProtectedRoute>} />
             <Route path="/face-enrollment" element={<ProtectedRoute><FaceEnrollment /></ProtectedRoute>} />
             <Route path="/face-attendance" element={<ProtectedRoute><FaceAttendance /></ProtectedRoute>} />
+            <Route path="/face-enrollment-management" element={<ProtectedRoute><FaceEnrollmentManagement /></ProtectedRoute>} />
 
             <Route path="/" element={<Navigate to="/login" />} />
             <Route path="*" element={<NotFound />} />
