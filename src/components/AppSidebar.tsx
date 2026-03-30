@@ -20,6 +20,7 @@ import {
   Bell,
   Timer,
   ScanFace,
+  UserCheck,
 } from 'lucide-react';
 import {
   Sidebar,
@@ -231,6 +232,7 @@ export function AppSidebar() {
     { id: '/hr-analytics', label: 'HR Analytics', icon: BarChart3, visible: Boolean(menuPreferences.hrAnalytics) && normalizedRole === 'hr' },
     { id: '/device-access', label: 'Device Access', icon: Shield, visible: Boolean(menuPreferences.deviceAccess) && normalizedRole === 'hr' },
     { id: '/face-enrollment', label: 'Face Enrollment', icon: ScanFace, visible: Boolean(menuPreferences.faceEnrollment) && normalizedRole === 'hr' },
+    { id: '/face-enrollment-management', label: 'Face Data Mgmt', icon: UserCheck, visible: Boolean(menuPreferences.faceEnrollment) && normalizedRole === 'hr' },
     { id: '/face-attendance', label: 'Face Attendance', icon: ScanFace, visible: Boolean(menuPreferences.faceAttendance) && (normalizedRole === 'hr' || normalizedRole === 'hod') },
   ];
 
