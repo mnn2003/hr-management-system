@@ -10,7 +10,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { Badge } from '@/components/ui/badge';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from '@/components/ui/dialog';
 import { Textarea } from '@/components/ui/textarea';
-import { FileDown, Calendar, Clock, Search, TrendingUp, ClipboardList, Filter, Users, AlertTriangle, Gift, MoreHorizontal } from 'lucide-react';
+import { FileDown, Calendar, Clock, Search, TrendingUp, ClipboardList, Filter, Users, AlertTriangle, Gift, MoreHorizontal, Camera } from 'lucide-react';
 import { format } from 'date-fns';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { SearchableEmployeeSelect } from '@/components/ui/searchable-employee-select';
@@ -29,6 +29,9 @@ interface AttendanceRecord {
   punchInLocation?: any;
   punchOutLocation?: any;
   isLate?: boolean;
+  faceImage?: string;
+  punchInFaceImage?: string;
+  punchOutFaceImage?: string;
 }
 
 interface Employee {
@@ -52,7 +55,10 @@ const mapDocToAttendanceRecord = (doc: any): AttendanceRecord => {
     punchOut: data.punchOut || null,
     punchInLocation: data.punchInLocation,
     punchOutLocation: data.punchOutLocation,
-    isLate: data.isLate || false
+    isLate: data.isLate || false,
+    faceImage: data.faceImage || null,
+    punchInFaceImage: data.punchInFaceImage || null,
+    punchOutFaceImage: data.punchOutFaceImage || null,
   };
 };
 
@@ -78,7 +84,8 @@ const AttendanceReportHR = () => {
   const [showCompOffDialog, setShowCompOffDialog] = useState(false);
   const [compOffRecord, setCompOffRecord] = useState<AttendanceRecord | null>(null);
   const [compOffReason, setCompOffReason] = useState('');
-
+  const [showFaceImageDialog, setShowFaceImageDialog] = useState(false);
+  const [selectedFaceImage, setSelectedFaceImage] = useState<{ image: string; name: string; date: string; type: string } | null>(null);
   useEffect(() => {
     const initializeData = async () => {
       await fetchEmployees();
@@ -686,6 +693,7 @@ const AttendanceReportHR = () => {
                       <TableHead className="font-semibold">Location</TableHead>
                       <TableHead className="font-semibold">Total Hours</TableHead>
                       <TableHead className="font-semibold">Status</TableHead>
+                      {isHR && <TableHead className="font-semibold">Face Image</TableHead>}
                       {isHR && <TableHead className="font-semibold">Actions</TableHead>}
                     </TableRow>
                   </TableHeader>
@@ -735,6 +743,33 @@ const AttendanceReportHR = () => {
                             </Badge>
                           </div>
                         </TableCell>
+                        {isHR && (
+                          <TableCell>
+                            {(record.punchInFaceImage || record.faceImage) ? (
+                              <button
+                                onClick={() => {
+                                  setSelectedFaceImage({
+                                    image: record.punchInFaceImage || record.faceImage || '',
+                                    name: record.employeeName || 'Unknown',
+                                    date: record.date,
+                                    type: 'Punch In'
+                                  });
+                                  setShowFaceImageDialog(true);
+                                }}
+                                className="group relative"
+                              >
+                                <img
+                                  src={record.punchInFaceImage || record.faceImage}
+                                  alt="Face"
+                                  className="w-10 h-10 rounded-full object-cover border-2 border-primary/20 group-hover:border-primary transition-colors"
+                                />
+                                <Camera className="absolute -bottom-1 -right-1 h-4 w-4 text-primary bg-background rounded-full p-0.5" />
+                              </button>
+                            ) : (
+                              <span className="text-xs text-muted-foreground">N/A</span>
+                            )}
+                          </TableCell>
+                        )}
                         {isHR && (
                           <TableCell>
                             <DropdownMenu>
@@ -817,6 +852,28 @@ const AttendanceReportHR = () => {
                         </p>
                       </div>
                     </div>
+                    {isHR && (record.punchInFaceImage || record.faceImage) && (
+                      <div className="mt-3 pt-3 border-t">
+                        <p className="text-muted-foreground text-xs mb-2">Face Capture</p>
+                        <button
+                          onClick={() => {
+                            setSelectedFaceImage({
+                              image: record.punchInFaceImage || record.faceImage || '',
+                              name: record.employeeName || 'Unknown',
+                              date: record.date,
+                              type: 'Punch In'
+                            });
+                            setShowFaceImageDialog(true);
+                          }}
+                        >
+                          <img
+                            src={record.punchInFaceImage || record.faceImage}
+                            alt="Face"
+                            className="w-12 h-12 rounded-lg object-cover border-2 border-primary/20"
+                          />
+                        </button>
+                      </div>
+                    )}
                     {isHR && (
                       <div className="flex gap-2 mt-3 pt-3 border-t">
                         {!record.isLate && (
@@ -898,6 +955,37 @@ const AttendanceReportHR = () => {
           </DialogContent>
         </Dialog>
       )}
+
+      {/* Face Image Dialog */}
+      <Dialog open={showFaceImageDialog} onOpenChange={setShowFaceImageDialog}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Camera className="h-5 w-5 text-primary" />
+              Face Attendance Capture
+            </DialogTitle>
+            <DialogDescription>
+              {selectedFaceImage?.name} — {selectedFaceImage?.date} ({selectedFaceImage?.type})
+            </DialogDescription>
+          </DialogHeader>
+          {selectedFaceImage && (
+            <div className="flex flex-col items-center gap-4">
+              <img
+                src={selectedFaceImage.image}
+                alt={`Face capture of ${selectedFaceImage.name}`}
+                className="w-full max-w-[300px] rounded-xl border-2 border-primary/20 shadow-lg"
+              />
+              <div className="text-center text-sm text-muted-foreground">
+                <p className="font-medium text-foreground">{selectedFaceImage.name}</p>
+                <p>{format(new Date(selectedFaceImage.date), 'EEEE, MMM dd, yyyy')}</p>
+              </div>
+            </div>
+          )}
+          <DialogFooter>
+            <Button variant="outline" onClick={() => { setShowFaceImageDialog(false); setSelectedFaceImage(null); }}>Close</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 };
