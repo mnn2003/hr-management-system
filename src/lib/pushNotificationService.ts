@@ -5,8 +5,8 @@ import { db, getFirebaseMessaging } from '@/lib/firebase';
 const PUSH_PREF_COLLECTION = 'push_preferences';
 const FCM_TOKENS_COLLECTION = 'fcm_tokens';
 
-// ⚠️ REPLACE THIS with your VAPID key from Firebase Console → Project Settings → Cloud Messaging → Web Push certificates
-const VAPID_KEY = 'YOUR_VAPID_KEY_HERE';
+//  VAPID key from Firebase Console → Project Settings → Cloud Messaging → Web Push certificates
+const VAPID_KEY = 'BDYheCVf_PP4MONYurgpwbH-054Cy0i3kpis-tpGs_3kIAh1m5hct3Mlqh_wewSAy6uJlzzlNOcTVNJR_TdYamc';
 
 export const isPushSupported = (): boolean => {
   return 'Notification' in window && 'serviceWorker' in navigator;
