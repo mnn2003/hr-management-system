@@ -8,6 +8,7 @@ import { doc, getDoc } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
 import NotificationBell from '@/components/notifications/NotificationBell';
 import LoginNotificationModal from '@/components/notifications/LoginNotificationModal';
+import PushNotificationPrompt from '@/components/notifications/PushNotificationPrompt';
 // FloatingChatWidget hidden - chat notifications now shown in notification bell
 import { useNavigate, useLocation } from 'react-router-dom';
 import {
@@ -80,6 +81,7 @@ export default function Layout({ children, pageTitle }: LayoutProps) {
   return (
     <SidebarProvider defaultOpen={!isMobile}>
       {pageTitle === 'Dashboard' && <LoginNotificationModal />}
+      {pageTitle === 'Dashboard' && <PushNotificationPrompt />}
       <div className="flex min-h-screen w-full bg-background">
         {userRole && <AppSidebar />}
         
