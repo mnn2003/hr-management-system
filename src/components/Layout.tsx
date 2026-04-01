@@ -9,7 +9,7 @@ import { db } from '@/lib/firebase';
 import NotificationBell from '@/components/notifications/NotificationBell';
 import LoginNotificationModal from '@/components/notifications/LoginNotificationModal';
 import PushNotificationPrompt from '@/components/notifications/PushNotificationPrompt';
-// FloatingChatWidget hidden - chat notifications now shown in notification bell
+// FloatingChatWidget Floating Chat Widget hidden - chat notifications now shown in notification bell
 import { useNavigate, useLocation } from 'react-router-dom';
 import {
   DropdownMenu,
