@@ -10,7 +10,14 @@ import { db, storage } from '@/lib/firebase';
 import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
 import { toast } from 'sonner';
 import { Separator } from '@/components/ui/separator';
-import { Upload, Image as ImageIcon } from 'lucide-react';
+import { Upload, Image as ImageIcon, Bell, BellOff } from 'lucide-react';
+import {
+  isPushSupported,
+  getPushPermissionStatus,
+  requestPushPermission,
+  savePushPreference,
+  getPushPreference,
+} from '@/lib/pushNotificationService';
 
 
 interface Preferences {
@@ -111,6 +118,8 @@ const DashboardSettings = () => {
   });
   const [logoFile, setLogoFile] = useState<File | null>(null);
   const [uploadingLogo, setUploadingLogo] = useState(false);
+  const [pushNotifEnabled, setPushNotifEnabled] = useState(false);
+  const [pushLoading, setPushLoading] = useState(false);
 
   const isSuperAdmin = userRole === 'super-admin';
   const isHrOrHod = userRole === 'hr' || userRole === 'hod';
@@ -118,12 +127,49 @@ const DashboardSettings = () => {
 
   useEffect(() => {
     loadPreferences();
+    loadPushPreference();
     if (isSuperAdmin) {
       loadSystemSettings();
     } else if (isHrOrHod && organizationId) {
       loadOrganizationSettings();
     }
   }, [user, userRole, organizationId]);
+
+  const loadPushPreference = async () => {
+    if (!user) return;
+    const enabled = await getPushPreference(user.uid);
+    setPushNotifEnabled(enabled);
+  };
+
+  const togglePushNotifications = async () => {
+    if (!user) return;
+    setPushLoading(true);
+    try {
+      if (!pushNotifEnabled) {
+        // Enabling - request permission first
+        if (isPushSupported()) {
+          const permission = await requestPushPermission();
+          if (permission !== 'granted') {
+            toast.error('Please allow notifications in your browser settings');
+            setPushLoading(false);
+            return;
+          }
+        }
+        await savePushPreference(user.uid, true);
+        setPushNotifEnabled(true);
+        toast.success('Push notifications enabled!');
+      } else {
+        await savePushPreference(user.uid, false);
+        setPushNotifEnabled(false);
+        toast.success('Push notifications disabled');
+      }
+    } catch (error) {
+      console.error('Error toggling push notifications:', error);
+      toast.error('Failed to update push notification settings');
+    } finally {
+      setPushLoading(false);
+    }
+  };
 
   const loadPreferences = async () => {
     if (!user) return;
@@ -429,6 +475,44 @@ const DashboardSettings = () => {
         </Card>
       )}
 
+      {/* Push Notification Settings */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <Bell className="h-5 w-5" />
+            Push Notifications
+          </CardTitle>
+          <CardDescription>
+            Receive browser notifications for attendance reminders, leave updates, birthdays, and announcements
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="flex items-center justify-between">
+            <div className="space-y-1">
+              <Label htmlFor="push-notifications">Enable Push Notifications</Label>
+              <p className="text-xs text-muted-foreground">
+                {getPushPermissionStatus() === 'denied' 
+                  ? 'Notifications blocked in browser. Please update browser settings.' 
+                  : 'Get notified even when the app is in the background'}
+              </p>
+            </div>
+            <Switch
+              id="push-notifications"
+              checked={pushNotifEnabled}
+              onCheckedChange={togglePushNotifications}
+              disabled={pushLoading || getPushPermissionStatus() === 'denied'}
+            />
+          </div>
+          {pushNotifEnabled && (
+            <div className="rounded-lg bg-primary/5 p-3 text-sm text-muted-foreground space-y-1">
+              <p>✅ Attendance reminders</p>
+              <p>✅ Leave approval/rejection alerts</p>
+              <p>✅ Birthday wishes</p>
+              <p>✅ Admin announcements</p>
+            </div>
+          )}
+        </CardContent>
+      </Card>
 
       <div className="grid gap-6 md:grid-cols-2">
         {/* Menu Preferences */}
